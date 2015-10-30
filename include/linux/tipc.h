@@ -60,24 +60,24 @@ struct tipc_name_seq {
 	__u32 upper;
 };
 
-static __inline__ __u32 tipc_addr(unsigned int zone,
+static inline __u32 tipc_addr(unsigned int zone,
 			      unsigned int cluster,
 			      unsigned int node)
 {
 	return (zone << 24) | (cluster << 12) | node;
 }
 
-static __inline__ unsigned int tipc_zone(__u32 addr)
+static inline unsigned int tipc_zone(__u32 addr)
 {
 	return addr >> 24;
 }
 
-static __inline__ unsigned int tipc_cluster(__u32 addr)
+static inline unsigned int tipc_cluster(__u32 addr)
 {
 	return (addr >> 12) & 0xfff;
 }
 
-static __inline__ unsigned int tipc_node(__u32 addr)
+static inline unsigned int tipc_node(__u32 addr)
 {
 	return addr & 0xfff;
 }
@@ -152,6 +152,17 @@ struct tipc_event {
 	__u32 found_upper;		/*    "      "    "     "      */
 	struct tipc_portid port;	/* associated port */
 	struct tipc_subscr s;		/* associated subscription */
+};
+
+/*
+ *     Definitions for the TIPC protocol sk_state field.
+ */
+enum {
+	TIPC_UNCONNECTED,
+	TIPC_LISTEN,
+	TIPC_READY,
+	TIPC_CONN_PROBING,
+	TIPC_CONN_ESTABLISHED,
 };
 
 /*

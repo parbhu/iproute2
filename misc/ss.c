@@ -42,6 +42,9 @@
 #include <linux/filter.h>
 #include <linux/packet_diag.h>
 #include <linux/netlink_diag.h>
+#include <linux/net.h>
+#include <linux/tipc.h>
+#include <linux/tipc_netlink.h>
 
 #define MAGIC_SEQ 123456
 
@@ -125,6 +128,7 @@ enum
 	PACKET_DG_DB,
 	PACKET_R_DB,
 	NETLINK_DB,
+	TIPC_DB,
 	MAX_DB
 };
 
@@ -151,6 +155,8 @@ enum {
 
 #define SS_ALL ((1 << SS_MAX) - 1)
 #define SS_CONN (SS_ALL & ~((1<<SS_LISTEN)|(1<<SS_CLOSE)|(1<<SS_TIME_WAIT)|(1<<SS_SYN_RECV)))
+#define TIPC_SS_CONN ((1<<SS_UNCONNECTED)|(1<<SS_CONNECTING)|(1<<SS_CONNECTED)|(1<<SS_DISCONNECTING))
+
 
 #include "ssfilter.h"
 
@@ -203,6 +209,10 @@ static const struct filter default_dbs[MAX_DB] = {
 		.states   = (1 << SS_CLOSE),
 		.families = (1 << AF_NETLINK),
 	},
+	[TIPC_DB] = {
+		.states   = TIPC_SS_CONN,
+		.families = (1 << AF_NETLINK),
+	},
 };
 
 static const struct filter default_afs[AF_MAX] = {
@@ -225,6 +235,10 @@ static const struct filter default_afs[AF_MAX] = {
 	[AF_NETLINK] = {
 		.dbs    = (1 << NETLINK_DB),
 		.states = (1 << SS_CLOSE),
+	},
+	[AF_TIPC] = {
+		.dbs = (1 << TIPC_DB),
+		.states   = TIPC_SS_CONN
 	},
 };
 
@@ -263,6 +277,7 @@ static void filter_default_dbs(struct filter *f)
 	filter_db_set(f, PACKET_R_DB);
 	filter_db_set(f, PACKET_DG_DB);
 	filter_db_set(f, NETLINK_DB);
+	filter_db_set(f, TIPC_DB);
 }
 
 static void filter_states_set(struct filter *f, int states)
@@ -713,6 +728,23 @@ static const char *sstate_namel[] = {
 	[SS_LAST_ACK] = "last-ack",
 	[SS_LISTEN] = 	"listening",
 	[SS_CLOSING] = "closing",
+};
+
+static const char * const stype_nameg[] = {
+	"UNKNOWN",
+	[SOCK_STREAM] = "SOCK_STREAM",
+	[SOCK_DGRAM] = "SOCK_DGRAM",
+	[SOCK_RDM] = "SOCK_RDM",
+	[SOCK_SEQPACKET] = "SOCK_SEQPACKET",
+};
+
+static const char * const tipc_sstate[] = {
+	"UNKNOWN",
+	[TIPC_UNCONNECTED] = "UNCONN",
+	[TIPC_LISTEN] = "LISTEN",
+	[TIPC_READY] = "READY",
+	[TIPC_CONN_PROBING] = "PROB",
+	[TIPC_CONN_ESTABLISHED] = "ESTAB",
 };
 
 struct sockstat
@@ -3229,6 +3261,108 @@ static int netlink_show(struct filter *f)
 	return 0;
 }
 
+static void tipc_print_port_identity(struct rtattr *net_addr, struct rtattr *id)
+{
+	uint32_t node = rta_getattr_u32(net_addr);
+	uint32_t identity = rta_getattr_u32(id);
+	SPRINT_BUF(addr) = {};
+	SPRINT_BUF(port) = {};
+
+	sprintf(addr, "%u.%u.%u", tipc_zone(node), tipc_cluster(node),
+		tipc_node(node));
+	sprintf(port, "%u", identity);
+	sock_addr_print(addr, ":", port, NULL);
+}
+
+static int tipc_show_sock(const struct sockaddr_nl *addr, struct nlmsghdr *nlh,
+			  void *arg)
+{
+	struct rtattr *info[TIPC_NLA_MAX + 1] = {};
+	struct rtattr *attrs[TIPC_NLA_SOCK_MAX + 1] = {};
+	struct rtattr *con[TIPC_NLA_CON_MAX + 1] = {};
+	struct rtattr *stat[TIPC_NLA_SOCK_STAT_MAX + 1] = {};
+	struct rtattr *msg_ref;
+
+	parse_rtattr(info, TIPC_NLA_MAX, NLMSG_DATA(nlh), NLMSG_PAYLOAD(nlh,0));
+
+	if (!info[TIPC_NLA_SOCK])
+		return 0;
+
+	msg_ref = info[TIPC_NLA_SOCK];
+	parse_rtattr(attrs, TIPC_NLA_SOCK_MAX, RTA_DATA(msg_ref),
+		     RTA_PAYLOAD(msg_ref));
+
+	msg_ref = attrs[TIPC_NLA_SOCK_STAT];
+	parse_rtattr(stat, TIPC_NLA_SOCK_STAT_MAX,
+		     RTA_DATA(msg_ref), RTA_PAYLOAD(msg_ref));
+
+	if (netid_width)
+		printf("%-*s ", netid_width, "tipc");
+
+	if (state_width) {
+		printf("%-*s ", state_width,
+		       tipc_sstate[rta_getattr_u32(attrs[TIPC_NLA_SOCK_TIPC_STATE])]);
+	}
+	printf("%-6d %-6d ",
+	       rta_getattr_u32(stat[TIPC_NLA_SOCK_STAT_RCVQ]),
+	       rta_getattr_u32(stat[TIPC_NLA_SOCK_STAT_SENDQ]));
+
+	tipc_print_port_identity(attrs[TIPC_NLA_SOCK_ADDR],
+				 attrs[TIPC_NLA_SOCK_REF]);
+
+	msg_ref = attrs[TIPC_NLA_SOCK_CON];
+	if (msg_ref) {
+		parse_rtattr(con, TIPC_NLA_CON_MAX,
+			     RTA_DATA(msg_ref), RTA_PAYLOAD(msg_ref));
+
+		tipc_print_port_identity(con[TIPC_NLA_CON_NODE],
+					 con[TIPC_NLA_CON_SOCK]);
+	} else {
+		sock_addr_print("", "-", "", NULL);
+	}
+
+	if (show_details) {
+		printf("\ntype:%-14s ",
+		       stype_nameg[rta_getattr_u32(attrs[TIPC_NLA_SOCK_TYPE])]);
+		printf("cong:%s ",
+		       stat[TIPC_NLA_SOCK_STAT_LINK_CONG] ? "link":
+		       stat[TIPC_NLA_SOCK_STAT_CONN_CONG] ? "conn":"none");
+		printf("drop:%d ", rta_getattr_u32(stat[TIPC_NLA_SOCK_STAT_DROP]));
+		if (attrs[TIPC_NLA_SOCK_HAS_PUBL]) {
+			printf("publ ");
+		}
+		if (con[TIPC_NLA_CON_FLAG])
+			printf("via {%u,%u} ",
+			       rta_getattr_u32(con[TIPC_NLA_CON_TYPE]),
+			       rta_getattr_u32(con[TIPC_NLA_CON_INST]));
+	}
+
+	if (show_users) {
+		char *buf;
+		printf("uid:%08u ", rta_getattr_u32(attrs[TIPC_NLA_SOCK_UID]));
+		if (find_entry(rta_getattr_u32(attrs[TIPC_NLA_SOCK_INO]), &buf,
+			       USERS) > 0) {
+			printf("users:(%s) ", buf);
+			free(buf);
+		} else {
+			printf("ino:%08u ", rta_getattr_u32(attrs[TIPC_NLA_SOCK_INO]));
+		}
+	}
+
+	printf("\n");
+	return 0;
+}
+
+static int tipc_show(struct filter *f)
+{
+	DIAG_REQUEST(req, struct sock_diag_req r);
+
+	memset(&req.r, 0, sizeof(req.r));
+	req.r.sdiag_family = AF_TIPC;
+
+	return handle_netlink_request(f, &req.nlh, sizeof(req), tipc_show_sock);
+}
+
 struct sock_diag_msg {
 	__u8 sdiag_family;
 };
@@ -3481,6 +3615,7 @@ static void _usage(FILE *dest)
 "   -u, --udp           display only UDP sockets\n"
 "   -d, --dccp          display only DCCP sockets\n"
 "   -w, --raw           display only RAW sockets\n"
+"   -y, --tipc          display only TIPC sockets\n"
 "   -x, --unix          display only Unix domain sockets\n"
 "   -f, --family=FAMILY display sockets of type FAMILY\n"
 "\n"
@@ -3558,6 +3693,7 @@ static const struct option long_opts[] = {
 	{ "udp", 0, 0, 'u' },
 	{ "raw", 0, 0, 'w' },
 	{ "unix", 0, 0, 'x' },
+	{ "tipc", 0, 0, 'y' },
 	{ "all", 0, 0, 'a' },
 	{ "listening", 0, 0, 'l' },
 	{ "ipv4", 0, 0, '4' },
@@ -3588,7 +3724,7 @@ int main(int argc, char *argv[])
 	int ch;
 	int state_filter = 0;
 
-	while ((ch = getopt_long(argc, argv, "dhaletuwxnro460spbEf:miA:D:F:vVzZN:",
+	while ((ch = getopt_long(argc, argv, "dhaletuwyxnro460spbEf:miA:D:F:vVzZN:",
 				 long_opts, NULL)) != EOF) {
 		switch(ch) {
 		case 'n':
@@ -3636,6 +3772,9 @@ int main(int argc, char *argv[])
 		case 'x':
 			filter_af_set(&current_filter, AF_UNIX);
 			break;
+		case 'y':
+			filter_af_set(&current_filter, AF_TIPC);
+			break;
 		case 'a':
 			state_filter = SS_ALL;
 			break;
@@ -3662,6 +3801,8 @@ int main(int argc, char *argv[])
 				filter_af_set(&current_filter, AF_UNIX);
 			else if (strcmp(optarg, "netlink") == 0)
 				filter_af_set(&current_filter, AF_NETLINK);
+			else if (strcmp(optarg, "tipc") == 0)
+				filter_af_set(&current_filter, AF_TIPC);
 			else if (strcmp(optarg, "help") == 0)
 				help();
 			else {
@@ -3703,6 +3844,8 @@ int main(int argc, char *argv[])
 					filter_db_set(&current_filter, UNIX_ST_DB);
 					filter_db_set(&current_filter, UNIX_DG_DB);
 					filter_db_set(&current_filter, UNIX_SQ_DB);
+				} else if (strcmp(p, "tipc") == 0) {
+					filter_db_set(&current_filter, TIPC_DB);
 				} else if (strcasecmp(p, "unix_stream") == 0 ||
 					   strcmp(p, "u_str") == 0) {
 					filter_db_set(&current_filter, UNIX_ST_DB);
@@ -3926,6 +4069,8 @@ int main(int argc, char *argv[])
 		tcp_show(&current_filter, IPPROTO_TCP);
 	if (current_filter.dbs & (1<<DCCP_DB))
 		tcp_show(&current_filter, IPPROTO_DCCP);
+	if (current_filter.dbs & (1<<TIPC_DB))
+		tipc_show(&current_filter);
 
 	if (show_users || show_proc_ctx || show_sock_ctx)
 		user_ent_destroy();

@@ -97,6 +97,7 @@ enum {
 	__TIPC_NLA_UDP_MAX,
 	TIPC_NLA_UDP_MAX = __TIPC_NLA_UDP_MAX - 1
 };
+
 /* Socket info */
 enum {
 	TIPC_NLA_SOCK_UNSPEC,
@@ -104,6 +105,11 @@ enum {
 	TIPC_NLA_SOCK_REF,		/* u32 */
 	TIPC_NLA_SOCK_CON,		/* nest */
 	TIPC_NLA_SOCK_HAS_PUBL,		/* flag */
+	TIPC_NLA_SOCK_STAT,		/* nest */
+	TIPC_NLA_SOCK_TYPE,		/* u32 */
+	TIPC_NLA_SOCK_INO,		/* u32 */
+	TIPC_NLA_SOCK_UID,		/* u32 */
+	TIPC_NLA_SOCK_TIPC_STATE,	/* u32 */
 
 	__TIPC_NLA_SOCK_MAX,
 	TIPC_NLA_SOCK_MAX = __TIPC_NLA_SOCK_MAX - 1
@@ -196,6 +202,18 @@ enum {
 	TIPC_NLA_CON_MAX = __TIPC_NLA_CON_MAX - 1
 };
 
+/* Nest, socket statistics info */
+enum {
+	TIPC_NLA_SOCK_STAT_RCVQ,	/* u32 */
+	TIPC_NLA_SOCK_STAT_SENDQ,	/* u32 */
+	TIPC_NLA_SOCK_STAT_LINK_CONG,	/* flag */
+	TIPC_NLA_SOCK_STAT_CONN_CONG,	/* flag */
+	TIPC_NLA_SOCK_STAT_DROP,	/* u32 */
+
+	__TIPC_NLA_SOCK_STAT_MAX,
+	TIPC_NLA_SOCK_STAT_MAX = __TIPC_NLA_SOCK_STAT_MAX - 1
+};
+
 /* Nest, link propreties. Valid for link, media and bearer */
 enum {
 	TIPC_NLA_PROP_UNSPEC,
@@ -208,7 +226,7 @@ enum {
 	TIPC_NLA_PROP_MAX = __TIPC_NLA_PROP_MAX - 1
 };
 
-/* Nest, statistics info */
+/* Nest, link statistics info */
 enum {
 	TIPC_NLA_STATS_UNSPEC,
 
